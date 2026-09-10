@@ -2,22 +2,20 @@
 
 A secure, containerized command-line login system built in Go. Features user registration, authentication, optional TOTP-based two-factor authentication (Google Authenticator compatible), session management, and account lockout protection.
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an interactive terminal UI and SQLite for lightweight persistence.
+Uses a lightweight CLI with hidden password input, terminal QR code generation, and SQLite for persistence.
 
 ---
 
 ## ✨ Features
 
-- **User Registration** — Create accounts with validated username and password
+- **User Registration** — Create accounts with validated username and password (with confirmation)
 - **Secure Authentication** — Login with bcrypt-hashed passwords
 - **TOTP 2FA** — Optional Google Authenticator compatible two-factor authentication
+- **QR Code Generation** — Scannable QR code displayed in terminal for easy 2FA setup
 - **Session Management** — UUID-based sessions with configurable timeout
 - **Account Lockout** — Automatic lockout after configurable failed login attempts
-- **Interactive TUI** — Bubble Tea powered terminal UI with:
-  - Tab completion for commands
-  - Command history (↑/↓ arrow keys)
-  - Password masking during input
-  - Styled, colored output
+- **Hidden Password Input** — Passwords are never displayed on screen (uses `golang.org/x/term`)
+- **Colored Output** — ANSI-styled terminal output for clear feedback
 - **Containerized** — Docker + Docker Compose for easy deployment
 - **Data Persistence** — SQLite database persists across container restarts
 
@@ -33,6 +31,8 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 ├── internal/
 │   ├── config/
 │   │   └── config.go              # Environment-based configuration
+│   ├── cli/
+│   │   └── cli.go                 # Interactive CLI (input, commands, output)
 │   ├── db/
 │   │   ├── db.go                  # SQLite connection setup
 │   │   ├── db_test.go             # Database tests
@@ -48,10 +48,6 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 │   │   ├── session_service.go     # Session management
 │   │   ├── totp_service.go        # TOTP 2FA logic
 │   │   └── totp_service_test.go   # TOTP tests
-│   └── tui/
-│       ├── app.go                 # Bubble Tea main model
-│       ├── commands.go            # Command handlers
-│       └── styles.go              # Lipgloss styles
 ├── data/                           # SQLite database (auto-created)
 ├── Dockerfile                      # Multi-stage build
 ├── docker-compose.yml             # Container orchestration
@@ -120,7 +116,7 @@ go build -o cli-login ./cmd/cli/
 | Command       | Description                                |
 |---------------|--------------------------------------------|
 | `whoami`      | Show current user details                  |
-| `enable-2fa`  | Enable TOTP-based two-factor authentication|
+| `enable-2fa`  | Enable TOTP-based 2FA (displays QR code)   |
 | `disable-2fa` | Disable two-factor authentication          |
 | `logout`      | End current session                        |
 | `help`        | Show available commands                    |
@@ -137,7 +133,7 @@ go build -o cli-login ./cmd/cli/
 
 ### Password Storage
 - Bcrypt hashing with configurable cost factor (default: 12)
-- Passwords are never logged or displayed
+- Passwords are never logged, displayed, or stored in command history
 
 ### Account Lockout
 - Locks after 5 failed login attempts (configurable)
@@ -152,6 +148,7 @@ go build -o cli-login ./cmd/cli/
 ### Two-Factor Authentication
 - TOTP-based (Time-based One-Time Password)
 - Compatible with Google Authenticator, Authy, and similar apps
+- **QR code displayed in terminal** for easy scanning
 - Verification required before enabling (ensures proper setup)
 - Verification required before disabling (prevents unauthorized changes)
 
@@ -217,7 +214,7 @@ The project follows a clean layered architecture:
 
 ```
 ┌─────────────────────────────────────────┐
-│              TUI (Bubble Tea)           │  ← User interaction
+│           CLI (bufio + x/term)          │  ← User interaction
 ├─────────────────────────────────────────┤
 │            Service Layer                │  ← Business logic
 │  (Auth, Session, TOTP)                  │
@@ -228,7 +225,7 @@ The project follows a clean layered architecture:
 └─────────────────────────────────────────┘
 ```
 
-- **TUI Layer** — Handles user input, rendering, and command routing
+- **CLI Layer** — Handles user input (with hidden passwords), command routing, and colored output
 - **Service Layer** — Contains all business logic (authentication, sessions, TOTP)
 - **Repository Layer** — Abstracts database queries with parameterized SQL
 - **Database Layer** — SQLite with WAL mode, foreign keys, and auto-migrations
@@ -238,7 +235,7 @@ The project follows a clean layered architecture:
 ## 📝 Usage Example
 
 ```
-$ docker compose run --rm cli-app
+$ go run ./cmd/cli/
 
    ██████╗  ██████╗     ██████╗██╗     ██╗
   ██╔════╝ ██╔═══██╗   ██╔════╝██║     ██║
@@ -249,28 +246,33 @@ $ docker compose run --rm cli-app
    Secure Login System with 2FA
 
 ❯ register
-  Enter username: john_doe
-  Enter password: ••••••••
+  Username: john_doe
+  Password: ••••••••
+  Confirm Password: ••••••••
 ✅ User 'john_doe' registered successfully! You can now login.
 
 ❯ login
-  Enter username: john_doe
-  Enter password: ••••••••
+  Username: john_doe
+  Password: ••••••••
 ✅ Login Successful!
-╭──────────────────────────────────────╮
-│ 👤 Username:        john_doe         │
-│ 📅 Registered:      2024-01-15 10:30 │
-│ 🔐 2FA Status:      Disabled ✗      │
-│ ⏰ Session Expires:  2024-01-15 11:00 │
-╰──────────────────────────────────────╯
+  ╭────────────────────────────────────────────╮
+  │  👤 Username:        john_doe              │
+  │  📅 Registered:      2024-01-15 10:30:00   │
+  │  🔐 2FA Status:      ✗ Disabled            │
+  │  ⏰ Session Expires:  2024-01-15 11:00:00   │
+  ╰────────────────────────────────────────────╯
 
-❯ enable-2fa
-  Secret: JBSWY3DPEHPK3PXP
-  URI: otpauth://totp/GoBackend-CLI:john_doe?...
-  Enter the 6-digit code: 123456
+[john_doe] ❯ enable-2fa
+  Scan this QR code with Google Authenticator:
+  ██████████████████████████████
+  ██ ▄▄▄▄▄ █ ▀█ █▀█ ▄▄▄▄▄ ██
+  ██ █   █ █▀██ ▄▄█ █   █ ██
+  ...
+  Secret (manual entry): JBSWY3DPEHPK3PXP
+  Code: 123456
 ✅ Two-Factor Authentication has been enabled successfully!
 
-❯ logout
+[john_doe] ❯ logout
 👋 Logged out successfully.
 ```
 
