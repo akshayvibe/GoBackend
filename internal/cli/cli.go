@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/akshayvibe/GoBackend/internal/models"
 	"github.com/akshayvibe/GoBackend/internal/service"
@@ -73,7 +74,7 @@ func (a *App) Run() {
 			break // EOF or error
 		}
 
-		input := strings.TrimSpace(a.scanner.Text())
+		input := sanitizeInput(a.scanner.Text())
 		if input == "" {
 			continue
 		}
@@ -307,7 +308,7 @@ func (a *App) handleLogout() {
 func (a *App) readLine(prompt string) string {
 	fmt.Print(prompt)
 	if a.scanner.Scan() {
-		return strings.TrimSpace(a.scanner.Text())
+		return sanitizeInput(a.scanner.Text())
 	}
 	return ""
 }
@@ -414,4 +415,15 @@ func (a *App) printInfo(format string, args ...interface{}) {
 func (a *App) printWarning(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("%s⚠️  %s%s\n", colorYellow, msg, colorReset)
+}
+
+// sanitizeInput strips non-printable control characters (such as arrow key escape codes) from user input.
+func sanitizeInput(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		if unicode.IsPrint(r) {
+			sb.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
