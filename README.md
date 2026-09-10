@@ -1,23 +1,115 @@
-# 🔐 Go CLI Login System with Optional 2FA
+# 🔐 Containerized Go CLI Login System with Optional 2FA
 
-A secure, containerized command-line login system built in Go. Features user registration, authentication, optional TOTP-based two-factor authentication (Google Authenticator compatible), session management, and account lockout protection.
-
-Uses a lightweight CLI with hidden password input, terminal QR code generation, and SQLite for persistence.
+A secure, enterprise-grade command-line login system built in Go. Features user registration, authentication, optional TOTP-based two-factor authentication (Google Authenticator compatible), session management, atomic account lockout protection, and containerized SQLite storage.
 
 ---
 
-## ✨ Features
+## 🏗️ System Architecture
 
-- **User Registration** — Create accounts with validated username and password (with confirmation)
-- **Secure Authentication** — Login with bcrypt-hashed passwords
-- **TOTP 2FA** — Optional Google Authenticator compatible two-factor authentication
-- **QR Code Generation** — Scannable QR code displayed in terminal for easy 2FA setup
-- **Session Management** — UUID-based sessions with configurable timeout
-- **Account Lockout** — Automatic lockout after configurable failed login attempts
-- **Hidden Password Input** — Passwords are never displayed on screen (uses `golang.org/x/term`)
-- **Colored Output** — ANSI-styled terminal output for clear feedback
-- **Containerized** — Docker + Docker Compose for easy deployment
-- **Data Persistence** — SQLite database persists across container restarts
+The application follows a **Decoupled Multi-Tier Layered Architecture** adhering to clean code and SOLID principles. 
+
+```mermaid
+graph TD
+    User([👤 User / Terminal Input]) <--> |Interactive CLI Prompt| CLI[CLI Presentation Layer\ninternal/cli]
+    
+    subgraph Service Layer [Service Layer - Business Logic]
+        AuthSvc[Auth Service\ninternal/service/auth_service.go]
+        TotpSvc[TOTP 2FA Service\ninternal/service/totp_service.go]
+        SessSvc[Session Service\ninternal/service/session_service.go]
+    end
+
+    subgraph Data Access Layer [Repository & Persistence Layer]
+        UserRepo[User Repository\ninternal/repository/user_repository.go]
+        DB[(SQLite Database\nmodernc.org/sqlite)]
+    end
+
+    CLI --> AuthSvc
+    CLI --> TotpSvc
+    CLI --> SessSvc
+
+    AuthSvc --> UserRepo
+    TotpSvc --> UserRepo
+    SessSvc --> UserRepo
+
+    UserRepo --> |Parameterized SQL / Atomic Tx| DB
+```
+
+### 🔁 Sequence Diagram: 2FA Authentication Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User Terminal
+    participant CLI as CLI Layer
+    participant Auth as Auth Service
+    participant TOTP as TOTP Service
+    participant Repo as Repository
+    participant DB as SQLite DB
+
+    User->>CLI: login (username, password)
+    CLI->>Auth: Login(ctx, username, password)
+    Auth->>Repo: GetUserByUsername(username)
+    Repo->>DB: SELECT * FROM users WHERE username=?
+    DB-->>Repo: User Record
+    Repo-->>Auth: User Struct
+    Auth->>Auth: Verify Bcrypt Hash & Check Lockout
+    Auth-->>CLI: User object (TOTPEnabled=true)
+    
+    CLI->>User: Prompt: Enter 6-digit TOTP Code
+    User->>CLI: Input 6-digit code
+    CLI->>TOTP: ValidateCode(secret, code)
+    
+    alt Invalid TOTP Code
+        TOTP-->>CLI: false
+        CLI->>Auth: RecordFailedAttempt(userID)
+        Auth->>Repo: IncrementFailedAttempts(userID)
+        Repo->>DB: Atomic UPDATE failed_attempts & Lockout check
+        CLI-->>User: ❌ Invalid TOTP code. Login aborted.
+    else Valid TOTP Code
+        TOTP-->>CLI: true
+        CLI->>SessSvc: CreateSession(userID)
+        SessSvc->>Repo: CreateSession(Session)
+        Repo->>DB: INSERT INTO sessions
+        CLI-->>User: ✅ Login Successful! (Displays Profile Box)
+    end
+```
+
+---
+
+## 🏛️ Architectural Layer Breakdown
+
+1. **CLI Presentation Layer (`internal/cli`)**:
+   - Manages interactive input loops (`bufio.Scanner`).
+   - Hides sensitive password keystrokes via `golang.org/x/term`.
+   - Renders terminal ASCII QR codes using `qrterminal` for 2FA onboarding.
+   - Filters control escape sequences (e.g. arrow keys) via input sanitization.
+
+2. **Service Business Logic (`internal/service`)**:
+   - **`AuthService`**: Handles user registration, password strength validation, timing-attack resistance, and failed attempt recording.
+   - **`TOTPService`**: Generates TOTP secrets, produces provisioning URIs, and validates 6-digit time-based tokens (`pquerna/otp`).
+   - **`SessionService`**: Issues UUID v4 session tokens with expiration tracking.
+
+3. **Data Access Repository (`internal/repository`)**:
+   - Encapsulates all SQL execution using safe parameterized queries (`?`).
+   - Manages atomic transactions (`db.BeginTx`) for failure counting and account lockouts.
+
+4. **Database & Storage Layer (`internal/db`)**:
+   - Embedded pure-Go CGO-free SQLite driver (`modernc.org/sqlite`).
+   - Enabled WAL (Write-Ahead Logging) journal mode and foreign key constraints.
+   - Auto-executes idempotent schema migrations on startup.
+
+---
+
+## ✨ Key Features
+
+- **User Registration**: Create accounts with strict username and password complexity rules.
+- **Bcrypt Password Security**: Configurable cost factor with timing-attack mitigation.
+- **Google Authenticator 2FA**: Standard TOTP RFC 6238 implementation with in-terminal QR code rendering.
+- **Atomic Account Lockout**: Locks accounts automatically after 5 failed login attempts for 15 minutes.
+- **2FA Brute-Force Defense**: Failed 2FA attempts count towards the account lockout threshold.
+- **Session Revocation**: Existing sessions are invalidated automatically whenever 2FA status is changed.
+- **FileSystem Security**: Strict file (`0600`) and directory (`0700`) permissions for database files.
+- **Containerization**: Fully containerized using Docker multi-stage builds and Docker Compose persistence volumes.
 
 ---
 
@@ -32,27 +124,27 @@ Uses a lightweight CLI with hidden password input, terminal QR code generation, 
 │   ├── config/
 │   │   └── config.go              # Environment-based configuration
 │   ├── cli/
-│   │   └── cli.go                 # Interactive CLI (input, commands, output)
+│   │   └── cli.go                 # Interactive CLI presentation & command router
 │   ├── db/
-│   │   ├── db.go                  # SQLite connection setup
-│   │   ├── db_test.go             # Database tests
-│   │   └── migrations.go          # Schema migrations
+│   │   ├── db.go                  # SQLite initialization & WAL mode setup
+│   │   ├── db_test.go             # Database connection & migration tests
+│   │   └── migrations.go          # Embedded SQL schema migrations
 │   ├── models/
-│   │   ├── user.go                # User & Session data models
-│   │   └── user_test.go           # Model tests
+│   │   ├── user.go                # User & Session domain structs
+│   │   └── user_test.go           # Struct logic tests
 │   ├── repository/
-│   │   └── user_repository.go     # Database access layer
-│   ├── service/
-│   │   ├── auth_service.go        # Authentication logic
-│   │   ├── auth_service_test.go   # Auth tests
-│   │   ├── session_service.go     # Session management
-│   │   ├── totp_service.go        # TOTP 2FA logic
-│   │   └── totp_service_test.go   # TOTP tests
-├── data/                           # SQLite database (auto-created)
-├── Dockerfile                      # Multi-stage build
-├── docker-compose.yml             # Container orchestration
+│   │   ├── user_repository.go     # Repository layer (parameterized queries & tx)
+│   │   └── user_repository_test.go# Repository unit tests
+│   └── service/
+│       ├── auth_service.go        # Authentication & registration service
+│       ├── auth_service_test.go   # Auth service unit tests
+│       ├── session_service.go     # Session management service
+│       ├── totp_service.go        # TOTP 2FA secret generation & validation
+│       └── totp_service_test.go   # TOTP service unit tests
+├── data/                           # Local SQLite storage directory (0700)
+├── Dockerfile                      # Multi-stage container build specification
+├── docker-compose.yml             # Container orchestration with volume persistence
 ├── .env.example                   # Environment variable template
-├── .gitignore
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -60,40 +152,39 @@ Uses a lightweight CLI with hidden password input, terminal QR code generation, 
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Quick Start Guide
 
-### Prerequisites
+### Option 1: Run with Docker Compose (Recommended)
 
-- [Docker](https://www.docker.com/get-started) & Docker Compose
-- OR [Go 1.21+](https://go.dev/dl/) for local development
-
-### Run with Docker (Recommended)
+Run the container in interactive TTY mode:
 
 ```bash
 # Clone the repository
 git clone https://github.com/akshayvibe/GoBackend.git
 cd GoBackend
 
-# Build and run
+# Run interactively with Docker Compose
 docker compose run --rm cli-app
 ```
 
-The SQLite database is stored in a Docker named volume (`app-data`) and persists across container restarts.
+The database file `app.db` is stored inside a Docker volume named `app-data` and persists across container restarts.
 
-### Run Locally
+### Option 2: Run Locally with Go
+
+Prerequisites: **Go 1.21+** installed.
 
 ```bash
 # Clone the repository
 git clone https://github.com/akshayvibe/GoBackend.git
 cd GoBackend
 
-# Install dependencies
+# Download dependencies
 go mod download
 
-# Run the application
+# Run directly
 go run ./cmd/cli/
 
-# Or build and run the binary
+# Or build the binary and execute
 go build -o cli-login ./cmd/cli/
 ./cli-login
 ```
@@ -102,91 +193,42 @@ go build -o cli-login ./cmd/cli/
 
 ## 📋 Available Commands
 
-### Before Login
+### 🔓 Commands Before Login
 
-| Command    | Description                              |
-|------------|------------------------------------------|
-| `register` | Create a new user account                |
-| `login`    | Login with username and password         |
-| `help`     | Show available commands                  |
-| `exit`     | Quit the program                         |
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `register` | Username, Password, Confirm Password | Create a new user account |
+| `login` | Username, Password, (TOTP Code if 2FA enabled) | Authenticate user & open a session |
+| `help` | — | Display available commands |
+| `exit` | — | Terminate the application |
 
-### After Login
+### 🔒 Commands After Login
 
-| Command       | Description                                |
-|---------------|--------------------------------------------|
-| `whoami`      | Show current user details                  |
-| `enable-2fa`  | Enable TOTP-based 2FA (displays QR code)   |
-| `disable-2fa` | Disable two-factor authentication          |
-| `logout`      | End current session                        |
-| `help`        | Show available commands                    |
-
----
-
-## 🔐 Security Features
-
-### Password Requirements
-- Minimum 8 characters
-- Must contain at least one uppercase letter
-- Must contain at least one lowercase letter
-- Must contain at least one digit
-
-### Password Storage
-- Bcrypt hashing with configurable cost factor (default: 12)
-- Passwords are never logged, displayed, or stored in command history
-
-### Account Lockout
-- Locks after 5 failed login attempts (configurable)
-- Lockout duration: 15 minutes (configurable)
-- Counter resets on successful login
-
-### Session Management
-- Cryptographically secure UUID-based session tokens
-- Configurable timeout (default: 30 minutes)
-- Sessions are stored in the database and validated on each command
-
-### Two-Factor Authentication
-- TOTP-based (Time-based One-Time Password)
-- Compatible with Google Authenticator, Authy, and similar apps
-- **QR code displayed in terminal** for easy scanning
-- Verification required before enabling (ensures proper setup)
-- Verification required before disabling (prevents unauthorized changes)
+| Command | Description |
+| :--- | :--- |
+| `whoami` | Displays user details, registration date, 2FA status, session expiration, and last login timestamp |
+| `enable-2fa` | Onboards 2FA: displays in-terminal ASCII QR code + manual secret, and verifies initial code |
+| `disable-2fa` | Prompts for current TOTP code to confirm and disable 2FA |
+| `logout` | Destroys current session and returns to unauthenticated prompt |
+| `help` | Display available commands |
 
 ---
 
-## ⚙️ Configuration
+## 🛡️ Security Architecture & Best Practices
 
-Configuration is done via environment variables. See [`.env.example`](.env.example) for all options:
-
-| Variable                   | Default       | Description                          |
-|----------------------------|---------------|--------------------------------------|
-| `DB_PATH`                  | `./data/app.db` | Path to SQLite database file       |
-| `SESSION_TIMEOUT_MINUTES`  | `30`          | Session expiration time              |
-| `MAX_FAILED_ATTEMPTS`      | `5`           | Failed logins before lockout         |
-| `LOCKOUT_DURATION_MINUTES` | `15`          | Duration of account lockout          |
-| `BCRYPT_COST`              | `12`          | Bcrypt hashing cost factor           |
-| `LOG_LEVEL`                | `info`        | Logging level (debug/info/warn/error)|
-
----
-
-## 🧪 Running Tests
-
-```bash
-# Run all tests
-go test ./... -v
-
-# Run specific package tests
-go test ./internal/service/ -v
-go test ./internal/models/ -v
-go test ./internal/db/ -v
-```
+1. **Bcrypt Password Hashing**: Passwords are validated for length (≥8 chars) and complexity (uppercase, lowercase, digit) before hashing with `golang.org/x/crypto/bcrypt`.
+2. **Timing-Attack Resistance**: Non-existent usernames trigger a dummy Bcrypt calculation to maintain uniform CPU execution time, defeating timing-based username enumeration.
+3. **Atomic Lockout Transactions**: Failed login attempt increments and lockout timestamp updates execute atomically via SQL transactions (`RETURNING failed_attempts`), eliminating race conditions.
+4. **2FA Rate Limiting**: Incorrect TOTP tokens increment the failure counter, ensuring brute-force protection across both 1st-factor and 2nd-factor authentication.
+5. **Session Revocation**: Enabling or disabling 2FA immediately invalidates all active sessions for that user ID.
+6. **File Permission Hardening**: SQLite directory permissions are restricted to `0700` and database files to `0600` (`rw-------`).
 
 ---
 
 ## 📦 Database Schema
 
 ```sql
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     username        TEXT UNIQUE NOT NULL,
     password_hash   TEXT NOT NULL,
@@ -198,86 +240,46 @@ CREATE TABLE users (
     last_login      DATETIME
 );
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at  DATETIME NOT NULL,
     created_at  DATETIME DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 ```
 
 ---
 
-## 🏗️ Architecture
+## ⚙️ Configuration Variables
 
-The project follows a clean layered architecture:
+Configuration values are controlled via environment variables or `.env`:
 
-```
-┌─────────────────────────────────────────┐
-│           CLI (bufio + x/term)          │  ← User interaction
-├─────────────────────────────────────────┤
-│            Service Layer                │  ← Business logic
-│  (Auth, Session, TOTP)                  │
-├─────────────────────────────────────────┤
-│           Repository Layer              │  ← Data access
-├─────────────────────────────────────────┤
-│        Database (SQLite)                │  ← Persistence
-└─────────────────────────────────────────┘
-```
-
-- **CLI Layer** — Handles user input (with hidden passwords), command routing, and colored output
-- **Service Layer** — Contains all business logic (authentication, sessions, TOTP)
-- **Repository Layer** — Abstracts database queries with parameterized SQL
-- **Database Layer** — SQLite with WAL mode, foreign keys, and auto-migrations
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `DB_PATH` | `./data/app.db` | Target path for the SQLite database file |
+| `SESSION_TIMEOUT_MINUTES` | `30` | Session lifetime in minutes |
+| `MAX_FAILED_ATTEMPTS` | `5` | Maximum failed login attempts before lockout |
+| `LOCKOUT_DURATION_MINUTES` | `15` | Account lockout duration in minutes |
+| `BCRYPT_COST` | `12` | Cost factor for Bcrypt hashing |
+| `LOG_LEVEL` | `info` | Minimum log severity level (`debug`, `info`, `warn`, `error`) |
 
 ---
 
-## 📝 Usage Example
+## 🧪 Testing
 
-```
-$ go run ./cmd/cli/
+Execute the automated test suite covering database connections, migrations, domain models, repository transactions, authentication, TOTP validation, and session management:
 
-   ██████╗  ██████╗     ██████╗██╗     ██╗
-  ██╔════╝ ██╔═══██╗   ██╔════╝██║     ██║
-  ██║  ███╗██║   ██║   ██║     ██║     ██║
-  ██║   ██║██║   ██║   ██║     ██║     ██║
-  ╚██████╔╝╚██████╔╝   ╚██████╗███████╗██║
-   ╚═════╝  ╚═════╝     ╚═════╝╚══════╝╚═╝
-   Secure Login System with 2FA
-
-❯ register
-  Username: john_doe
-  Password: ••••••••
-  Confirm Password: ••••••••
-✅ User 'john_doe' registered successfully! You can now login.
-
-❯ login
-  Username: john_doe
-  Password: ••••••••
-✅ Login Successful!
-  ╭────────────────────────────────────────────╮
-  │  👤 Username:        john_doe              │
-  │  📅 Registered:      2024-01-15 10:30:00   │
-  │  🔐 2FA Status:      ✗ Disabled            │
-  │  ⏰ Session Expires:  2024-01-15 11:00:00   │
-  ╰────────────────────────────────────────────╯
-
-[john_doe] ❯ enable-2fa
-  Scan this QR code with Google Authenticator:
-  ██████████████████████████████
-  ██ ▄▄▄▄▄ █ ▀█ █▀█ ▄▄▄▄▄ ██
-  ██ █   █ █▀██ ▄▄█ █   █ ██
-  ...
-  Secret (manual entry): JBSWY3DPEHPK3PXP
-  Code: 123456
-✅ Two-Factor Authentication has been enabled successfully!
-
-[john_doe] ❯ logout
-👋 Logged out successfully.
+```bash
+# Run all tests in verbose mode
+go test ./... -v
 ```
 
 ---
 
-## 📄 License
+## 📄 License & Assessment Details
 
-This project is part of a backend development assessment.
+This repository was created as a Go Backend Developer assessment project meeting all functional, security, and containerization requirements.
