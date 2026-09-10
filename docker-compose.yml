@@ -1,0 +1,27 @@
+# =============================================================================
+# Docker Compose for CLI Login System
+# Builds and runs the Go CLI application with persistent SQLite storage
+# =============================================================================
+
+services:
+  cli-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-cli-login
+    stdin_open: true     # Keep STDIN open for interactive CLI
+    tty: true            # Allocate a pseudo-TTY for Bubble Tea
+    volumes:
+      - app-data:/app/data   # Persist SQLite database across restarts
+    environment:
+      - DB_PATH=/app/data/app.db
+      - SESSION_TIMEOUT_MINUTES=30
+      - MAX_FAILED_ATTEMPTS=5
+      - LOCKOUT_DURATION_MINUTES=15
+      - BCRYPT_COST=12
+      - LOG_LEVEL=info
+    restart: unless-stopped
+
+volumes:
+  app-data:
+    driver: local
