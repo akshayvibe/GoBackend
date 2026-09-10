@@ -179,7 +179,8 @@ func (a *App) handleLogin() {
 		a.printInfo("🔐 2FA is enabled. Enter your 6-digit TOTP code:")
 		code := a.readLine("  Code: ")
 
-		if !a.totpService.ValidateCode(user.TOTPSecret, code) {
+		if code == "" || !a.totpService.ValidateCode(user.TOTPSecret, code) {
+			_ = a.authService.RecordFailedAttempt(ctx, user.ID)
 			a.printError("Invalid TOTP code. Login aborted.")
 			return
 		}

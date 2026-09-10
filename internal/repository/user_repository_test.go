@@ -190,4 +190,20 @@ func TestUserRepository_SessionOperations(t *testing.T) {
 	if deletedSess != nil {
 		t.Error("session should be deleted")
 	}
+
+	// Create multiple sessions and test DeleteUserSessions
+	s1 := &models.Session{ID: "sess-1", UserID: user.ID, ExpiresAt: time.Now().Add(1 * time.Hour)}
+	s2 := &models.Session{ID: "sess-2", UserID: user.ID, ExpiresAt: time.Now().Add(1 * time.Hour)}
+	_ = repo.CreateSession(ctx, s1)
+	_ = repo.CreateSession(ctx, s2)
+
+	if err := repo.DeleteUserSessions(ctx, user.ID); err != nil {
+		t.Fatalf("DeleteUserSessions failed: %v", err)
+	}
+
+	s1Check, _ := repo.GetSession(ctx, "sess-1")
+	s2Check, _ := repo.GetSession(ctx, "sess-2")
+	if s1Check != nil || s2Check != nil {
+		t.Error("all user sessions should have been deleted")
+	}
 }

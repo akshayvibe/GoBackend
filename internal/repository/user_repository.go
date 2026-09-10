@@ -124,33 +124,33 @@ func (r *UserRepository) UserExists(ctx context.Context, username string) (bool,
 	return count > 0, nil
 }
 
-// IncrementFailedAttempts increases the failed login attempt counter for a user.
+// IncrementFailedAttempts increases the failed login attempt counter for a user atomically.
 // If the counter reaches maxAttempts, the account is locked for the specified duration.
 func (r *UserRepository) IncrementFailedAttempts(ctx context.Context, userID, maxAttempts int, lockoutDuration time.Duration) error {
-	// First increment the counter
-	updateQuery := `UPDATE users SET failed_attempts = failed_attempts + 1 WHERE id = ?`
-	if _, err := r.db.ExecContext(ctx, updateQuery, userID); err != nil {
-		return fmt.Errorf("failed to increment failed attempts: %w", err)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	defer tx.Rollback()
 
-	// Check if we need to lock the account
+	// Atomically increment failed_attempts and retrieve the new value
+	updateQuery := `UPDATE users SET failed_attempts = failed_attempts + 1 WHERE id = ? RETURNING failed_attempts`
 	var failedAttempts int
-	checkQuery := `SELECT failed_attempts FROM users WHERE id = ?`
-	if err := r.db.QueryRowContext(ctx, checkQuery, userID).Scan(&failedAttempts); err != nil {
-		return fmt.Errorf("failed to check failed attempts: %w", err)
+	if err := tx.QueryRowContext(ctx, updateQuery, userID).Scan(&failedAttempts); err != nil {
+		return fmt.Errorf("failed to increment failed attempts: %w", err)
 	}
 
 	if failedAttempts >= maxAttempts {
 		lockUntil := time.Now().Add(lockoutDuration)
 		lockQuery := `UPDATE users SET locked_until = ? WHERE id = ?`
-		if _, err := r.db.ExecContext(ctx, lockQuery, lockUntil, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, lockQuery, lockUntil, userID); err != nil {
 			return fmt.Errorf("failed to lock account: %w", err)
 		}
 		slog.Warn("account locked due to too many failed attempts",
 			"user_id", userID, "locked_until", lockUntil)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // ResetFailedAttempts resets the failed login attempt counter and updates the last login time.
@@ -213,6 +213,17 @@ func (r *UserRepository) DeleteSession(ctx context.Context, sessionID string) er
 	}
 
 	slog.Info("session deleted", "session_id", sessionID)
+	return nil
+}
+
+// DeleteUserSessions invalidates all active sessions for a specific user ID.
+func (r *UserRepository) DeleteUserSessions(ctx context.Context, userID int) error {
+	query := `DELETE FROM sessions WHERE user_id = ?`
+	if _, err := r.db.ExecContext(ctx, query, userID); err != nil {
+		return fmt.Errorf("failed to delete user sessions: %w", err)
+	}
+
+	slog.Info("all user sessions invalidated", "user_id", userID)
 	return nil
 }
 

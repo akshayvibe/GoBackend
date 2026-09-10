@@ -79,6 +79,9 @@ func (s *AuthService) Register(ctx context.Context, username, password string) (
 	return user, nil
 }
 
+// dummyBcryptHash is a valid bcrypt hash used to maintain constant-time password check latency when username is not found.
+const dummyBcryptHash = "$2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuuabcdefghijk"
+
 // Login authenticates a user with the given credentials.
 // It returns the user if authentication is successful, or an error describing the failure.
 // The caller must handle TOTP verification separately if the user has 2FA enabled.
@@ -89,6 +92,8 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (*mo
 		return nil, fmt.Errorf("login lookup failed: %w", err)
 	}
 	if user == nil {
+		// Perform dummy bcrypt comparison to prevent username enumeration timing attacks
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
 		slog.Warn("login attempt for non-existent user", "username", username)
 		return nil, ErrInvalidCredentials
 	}
@@ -132,6 +137,11 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (*mo
 	slog.Info("user authenticated successfully", "username", username,
 		"totp_enabled", user.TOTPEnabled)
 	return user, nil
+}
+
+// RecordFailedAttempt manually increments failed attempts (e.g. for failed 2FA verification).
+func (s *AuthService) RecordFailedAttempt(ctx context.Context, userID int) error {
+	return s.repo.IncrementFailedAttempts(ctx, userID, s.config.MaxFailedAttempts, s.config.LockoutDuration)
 }
 
 // GetUser retrieves a user by ID. Used to refresh user data for display.

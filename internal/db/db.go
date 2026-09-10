@@ -14,9 +14,9 @@ import (
 // New creates a new SQLite database connection and ensures the data directory exists.
 // It configures WAL mode and foreign keys for optimal performance and data integrity.
 func New(dbPath string) (*sql.DB, error) {
-	// Ensure the directory for the database file exists.
+	// Ensure the directory for the database file exists with strict 0700 permissions.
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create data directory %q: %w", dir, err)
 	}
 
@@ -24,6 +24,9 @@ func New(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Set file permissions to 0600 (owner read/write only) for database security
+	_ = os.Chmod(dbPath, 0600)
 
 	// Enable WAL mode for better concurrent read performance.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {

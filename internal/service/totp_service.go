@@ -62,6 +62,9 @@ func (s *TOTPService) EnableTOTP(ctx context.Context, userID int, secret, code s
 		return fmt.Errorf("failed to enable TOTP: %w", err)
 	}
 
+	// Invalidate active sessions as a security best practice upon security level changes
+	_ = s.repo.DeleteUserSessions(ctx, userID)
+
 	slog.Info("TOTP enabled for user", "user_id", userID)
 	return nil
 }
@@ -78,6 +81,9 @@ func (s *TOTPService) DisableTOTP(ctx context.Context, userID int, secret, code 
 	if err := s.repo.UpdateTOTPSecret(ctx, userID, "", false); err != nil {
 		return fmt.Errorf("failed to disable TOTP: %w", err)
 	}
+
+	// Invalidate active sessions as a security best practice upon security level changes
+	_ = s.repo.DeleteUserSessions(ctx, userID)
 
 	slog.Info("TOTP disabled for user", "user_id", userID)
 	return nil
