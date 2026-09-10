@@ -7,13 +7,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/akshayvibe/GoBackend/internal/cli"
 	"github.com/akshayvibe/GoBackend/internal/config"
 	"github.com/akshayvibe/GoBackend/internal/db"
 	"github.com/akshayvibe/GoBackend/internal/repository"
 	"github.com/akshayvibe/GoBackend/internal/service"
-	"github.com/akshayvibe/GoBackend/internal/tui"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -52,15 +50,9 @@ func main() {
 	sessionService := service.NewSessionService(repo, cfg)
 	totpService := service.NewTOTPService(repo)
 
-	// Create and start the Bubble Tea application.
-	model := tui.NewModel(authService, sessionService, totpService)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-
-	if _, err := p.Run(); err != nil {
-		slog.Error("application error", "error", err)
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	// Create and run the CLI application.
+	app := cli.New(authService, sessionService, totpService)
+	app.Run()
 }
 
 // setupLogger configures the structured logger based on the log level.
@@ -77,7 +69,7 @@ func setupLogger(level string) {
 		logLevel = slog.LevelInfo
 	}
 
-	// Log to a file so TUI output isn't disrupted.
+	// Log to a file so CLI output isn't disrupted.
 	logFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		// Fall back to stderr if log file can't be opened

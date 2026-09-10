@@ -1,0 +1,10 @@
+{"time":"2026-09-10T21:48:55.629149+05:30","level":"INFO","msg":"starting CLI Login System","db_path":"./data/app.db","session_timeout":1800000000000,"max_failed_attempts":5,"lockout_duration":900000000000}
+{"time":"2026-09-10T21:48:55.635649+05:30","level":"INFO","msg":"database connection established","path":"./data/app.db"}
+{"time":"2026-09-10T21:48:55.635662+05:30","level":"INFO","msg":"running database migrations"}
+{"time":"2026-09-10T21:48:55.637365+05:30","level":"INFO","msg":"database migrations completed successfully"}
+{"time":"2026-09-10T21:52:10.780397+05:30","level":"INFO","msg":"user created","username":"im_akshayjha","id":1}
+{"time":"2026-09-10T21:52:10.780531+05:30","level":"INFO","msg":"user registered successfully","username":"im_akshayjha"}
+{"time":"2026-09-10T21:52:26.03169+05:30","level":"INFO","msg":"user authenticated successfully","username":"im_akshayjha","totp_enabled":false}
+{"time":"2026-09-10T21:52:26.031827+05:30","level":"INFO","msg":"session created","session_id":"3f90a311-2d69-4882-a1c2-d3b498589650","user_id":1,"expires_at":"2026-09-10T22:22:26.031724+05:30"}
+{"time":"2026-09-10T21:52:26.031833+05:30","level":"INFO","msg":"session created","session_id":"3f90a311-2d69-4882-a1c2-d3b498589650","user_id":1,"expires_at":"2026-09-10T22:22:26+05:30"}
+{"time":"2026-09-10T21:53:50.058169+05:30","level":"INFO","msg":"TOTP secret generated","username":"im_akshayjha"}
